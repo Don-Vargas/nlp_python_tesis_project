@@ -1,0 +1,351 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Sep 10 12:29:45 2021
+
+@author: hecvagu
+"""
+
+
+from analisys.loads import Loader
+from analisys.preprocessings import Preprocessing
+from analisys.representations import Representation
+from analisys.clusters import Cluster
+from analisys.evaluations import Evaluator
+
+    
+def representation_selector(documents, represent, **variables):
+    
+    if variables["representation"] == "CountVectorizer":
+        representation_results = represent.count_vectorizer(documents, **variables)
+    elif variables["representation"] == "Word2Vec":
+        representation_results = represent.word_2_vec(documents, **variables)
+    elif variables["representation"] == "TFIDF":
+        representation_results = represent.tf_idf(documents, **variables)
+    else:
+        representation_results = 0
+        print("La representación " + variables["representation"] + " no está disponible")
+        
+    return(representation_results)
+
+
+def cluster_selector(clust, sqlContext, representation_results,  **variables):
+    
+    if variables["cluster"] == "GMM":
+        clu = clust.g_m_m(representation_results, sqlContext, **variables)
+    elif variables["cluster"] == "Kmeans":
+        clu = clust.k_means(representation_results, sqlContext, **variables)
+    elif variables["cluster"] == "agglomerative":
+        clu = clust.agglomerative(representation_results, sqlContext, **variables)
+    else:
+        clu = 0
+        print("El cluster " + variables["cluster"] + " no está disponible")
+        
+    return(clu)
+    
+
+
+documentsPath = "/home/hecvagu/AnacondaProjects/MasterTesis/todasLasLeyes.csv"
+
+
+#representation_technic = ["CountVectorizer","Word2Vec","TFIDF"]
+#cluster_technic = ["GMM","Kmeans","agglomerative"]
+#scaler = ['minmax','standar','taxicab','euclid','none']
+
+
+representation = "Word2Vec"
+#cluster = "Kmeans"
+cluster = "agglomerative"
+scaler = "minmax"
+
+
+
+
+variables = {'representation': False,
+            'cluster': False,
+            'caso': False,
+            'scaler': False,
+            'resultados': False,
+            'vocab_size': False,
+            'vector_size': False,
+            'min_count': False,
+            'max_s_l': False,
+            'max_iter': False,
+            'numb_part': False,
+            'numb_features': False,
+            'numb_clusters': False,
+            'cov_type': False,
+            'numIterations': False,
+            'aff': False,
+            'link': False}
+
+
+
+
+representation_technic = ["CountVectorizer","Word2Vec","TFIDF"]
+cluster_technic = ["GMM","Kmeans","agglomerative"]
+scalers =  ['minmax', 'standar', 'none']
+casos = ["caso1", "caso2", "caso3", "caso4"]
+
+
+#word_2_vec
+vector_sizes = [200,400,800]
+min_counts = [5]
+max_s_ls = [1000]
+max_iters = [1]
+numb_parts = [5]
+
+#ALL Clusters
+numb_clusters_s = [20,22,24,26,28,30,32,34,36]
+#agglomerative
+affs = ['euclidean']
+links = ['ward']
+#g_m_m
+cov_types = ['full', 'diag', 'spherical']
+#k_means
+numIterations_s = [100]
+
+variables = {'representation': "Word2Vec",
+            'cluster': "GMM",
+            'caso': "caso1",
+            'scaler': 'minmax',
+            'resultados': 1,
+            'vocab_size': False,
+            'vector_size': 200,
+            'min_count': 5,
+            'max_s_l': 1000,
+            'max_iter': 1,
+            'numb_part': 5,
+            'numb_features': False,
+            'numb_clusters': 20,
+            'cov_type': 'full',
+            'numIterations': False,
+            'aff': False,
+            'link': False}
+
+
+
+data_load = Loader()
+preprocesses = Preprocessing()
+represent = Representation()
+clust = Cluster()
+evaluate = Evaluator() 
+
+sc,sqlContext = data_load.context_loader()
+print("spark version: ", sc.version)
+
+documents = data_load.leyes_loader(sc,sqlContext, documentsPath)
+
+test_case = data_load.test_cases_loader(variables["caso"])
+documents = preprocesses.data_preprocess( test_case, documents, sc, sqlContext)
+pruebas = documents.toPandas()
+print(pruebas.columns)
+print("###############")
+
+representation_results = representation_selector(documents, represent, **variables)
+pruebas1 = representation_results.toPandas()
+print(pruebas1.columns)
+print("###############")
+
+############################################################33
+
+clu = cluster_selector(clust, sqlContext, representation_results, **variables)
+print(clu.columns)
+print(clu.prediction.unique())
+print("###############")
+
+
+
+
+
+
+
+
+
+from sklearn.mixture import GaussianMixture
+#from pyspark.ml.clustering import PowerIterationClustering
+from sklearn.cluster import AgglomerativeClustering
+from pyspark.sql.functions import udf, col
+from pyspark.sql.types import  DoubleType, IntegerType, ArrayType
+
+
+from pyspark.ml.linalg import Vectors
+from pyspark.ml.feature import MinMaxScaler
+from pyspark.ml.feature import StandardScaler
+from pyspark.ml.feature import Normalizer
+
+
+
+
+indices_udf = udf(lambda vector: vector.indices.tolist(), ArrayType(IntegerType()))
+values_udf = udf(lambda vector: vector.toArray().tolist(), ArrayType(DoubleType()))
+
+"""
+# https://runawayhorse001.github.io/LearningApacheSpark/manipulation.html
+"""
+predictionsPanDF = representation_results\
+    .withColumn('indices', indices_udf(col('features')))\
+    .withColumn('values', values_udf(col('features'))).toPandas()
+    
+X = predictionsPanDF["values"]#.select('values')
+X = [i for i in X]
+
+    
+
+
+
+
+
+X = sqlContext.createDataFrame([(i, Vectors.dense(j),) for i,j in enumerate(X)], ["id", "features"])
+X = scaler_loader(X, variables["scaler"]).toPandas()
+X = [i.toArray() for i in X.scaled_features]
+
+                    
+clustering = GaussianMixture(n_components = variables["numb_clusters"],
+                             covariance_type = variables["cov_type"]).fit(X)
+predictionsPanDF["prediction"] = clustering.predict(X)
+predictionsPanDF.drop(["indices","values"],axis=1, inplace=True)
+
+
+
+
+
+
+
+
+
+
+
+def min_max_s(documents):
+    scaler = MinMaxScaler(inputCol="features", outputCol="scaled_features")
+    scalerModel = scaler.fit(documents)
+    scaledData = scalerModel.transform(documents)
+    return (scaledData)
+
+mini = min_max_s(representation_results).toPandas()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"""
+
+from scipy.spatial import distance
+
+from pyspark.sql.functions import udf, col
+from pyspark.sql.types import  StringType, DoubleType, IntegerType, ArrayType, StringType, FloatType
+
+indices_udf = udf(lambda vector: vector.indices.tolist(), ArrayType(IntegerType()))
+values_udf = udf(lambda vector: vector.toArray().tolist(), ArrayType(DoubleType()))
+
+"""
+# https://runawayhorse001.github.io/LearningApacheSpark/manipulation.html
+"""
+simil = representation_results.withColumn('indices', indices_udf(col('features')))\
+    .withColumn('values', values_udf(col('features')))#.toPandas()
+           
+           
+           
+
+
+simi = simil.toPandas()
+
+fixed_entry = simi["values"].iloc[-1]
+distance_udf = udf(lambda x: float(distance.euclidean(x, fixed_entry)), FloatType())
+df = simil.withColumn('distances', distance_udf(col('values')))
+
+
+
+
+from pyspark.ml.clustering import PowerIterationClustering
+
+
+pic = PowerIterationClustering(k=10,
+                               weightCol="distances")
+
+#similarity matrix
+#https://spark.apache.org/docs/latest/api/python/reference/api/pyspark.mllib.clustering.PowerIterationClusteringModel.html
+
+# Shows the cluster assignment
+predictionsPanDF = pic.assignClusters(df)
+
+
+clu = cluster_selector(cluster,  clust, representation_results)
+print(clu.columns)
+print("###############")
+
+
+
+
+
+def similarity(string, array):
+    if len(string) == 0:
+        return False
+    else:
+        return (any(word in string for word in array))
+contains_udf = udf(containsAny, T.IntegerType())
+documents =  documents.withColumn("keyword_match", contains_udf(col("text_splitted"), array([lit(i) for i in test_case])))
+return(documents)
+
+
+"""
+
+
+
+
+
+
+
+
+
+def spark_df_2_pandas(representation_results):
+    if representation_results != 0 :
+                        
+        indices_udf = udf(lambda vector: vector.indices.tolist(), ArrayType(IntegerType()))
+        values_udf = udf(lambda vector: vector.toArray().tolist(), ArrayType(DoubleType()))
+        
+        """
+        # https://runawayhorse001.github.io/LearningApacheSpark/manipulation.html
+        """
+        predictionsPanDF = representation_results\
+            .withColumn('indices', indices_udf(col('features')))\
+            .withColumn('values', values_udf(col('features'))).toPandas()
+            
+        X = predictionsPanDF["values"]#.select('values')
+        X = [i for i in X]
+    else:
+        predictionsPanDF = 0
+        X = 0
+        
+    return(predictionsPanDF, X)
+
+
+if representation_results != 0 :
+    predictionsPanDF, X = spark_df_2_pandas(representation_results)
+    
+    clustering = GaussianMixture(n_components=40,covariance_type='full').fit(X)
+    predictionsPanDF["prediction"] = clustering.predict(X)
+    predictionsPanDF.drop(["indices","values"],axis=1, inplace=True)
+    
+else:
+    predictionsPanDF = 0
+return(predictionsPanDF)
+
+
+
+
+
